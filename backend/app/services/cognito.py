@@ -1,8 +1,9 @@
 """
-AWS Cognito token verification and user info extraction.
-Validates JWT tokens issued by Cognito User Pool.
+Azure AD B2C token verification and user info extraction.
+Validates JWT tokens issued by Azure AD B2C user flows.
+
+Replaces the former AWS Cognito JWT verification.
 """
-import json
 import time
 from functools import lru_cache
 import httpx
@@ -13,22 +14,25 @@ from app.config import get_settings
 
 settings = get_settings()
 
-JWKS_URL = (
-    f"https://cognito-idp.{settings.aws_region}.amazonaws.com/"
-    f"{settings.cognito_user_pool_id}/.well-known/jwks.json"
-)
+
+def _jwks_url() -> str:
+    return (
+        f"https://{settings.b2c_tenant_name}.b2clogin.com/"
+        f"{settings.b2c_tenant_name}.onmicrosoft.com/"
+        f"{settings.b2c_policy_name}/discovery/v2.0/keys"
+    )
 
 
 @lru_cache(maxsize=1)
 def _get_jwks() -> dict:
-    response = httpx.get(JWKS_URL, timeout=10)
+    response = httpx.get(_jwks_url(), timeout=10)
     response.raise_for_status()
     return response.json()
 
 
-def verify_cognito_token(token: str) -> dict:
+def verify_b2c_token(token: str) -> dict:
     """
-    Verify a Cognito JWT and return the decoded claims.
+    Verify an Azure AD B2C JWT and return the decoded claims.
     Raises HTTP 401 if invalid.
     """
     try:
@@ -52,7 +56,7 @@ def verify_cognito_token(token: str) -> dict:
         if claims.get("exp", 0) < time.time():
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
 
-        if claims.get("client_id") != settings.cognito_client_id:
+        if claims.get("aud") != settings.b2c_client_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid audience")
 
         return claims
@@ -66,10 +70,11 @@ def verify_cognito_token(token: str) -> dict:
 
 
 def get_plan_from_claims(claims: dict) -> str:
-    """Extract plan tier from Cognito custom claims or groups."""
-    groups = claims.get("cognito:groups", [])
-    for tier in ("enterprise", "pro", "basic"):
-        if tier in groups:
-            return tier
-    # Fallback to custom attribute
-    return claims.get("custom:plan", "basic")
+    """
+    Extract plan tier from B2C custom attribute.
+    In B2C, custom attributes are surfaced as 'extension_plan' in token claims.
+    """
+    plan = claims.get("extension_plan", "basic")
+    if plan in ("enterprise", "pro", "basic"):
+        return plan
+    return "basic"

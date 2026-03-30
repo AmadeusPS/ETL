@@ -1,54 +1,82 @@
 terraform {
   required_version = ">= 1.7"
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.100"
+    }
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 2.50"
     }
   }
 
-  # Uncomment to use S3 backend for state in production
-  # backend "s3" {
-  #   bucket = "pricewatch-terraform-state"
-  #   key    = "production/terraform.tfstate"
-  #   region = "eu-west-1"
+  # Uncomment to use Azure Blob Storage backend for state in production:
+  # backend "azurerm" {
+  #   resource_group_name  = "pricewatch-tfstate-rg"
+  #   storage_account_name = "pricewatchtfstate"
+  #   container_name       = "tfstate"
+  #   key                  = "production/terraform.tfstate"
   # }
 }
 
-provider "aws" {
-  region = var.aws_region
+provider "azurerm" {
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy    = false
+      recover_soft_deleted_key_vaults = true
+    }
+  }
+}
+
+provider "azuread" {}
+
+# ---------------------------------------------------------------------------
+# Resource Group
+# ---------------------------------------------------------------------------
+resource "azurerm_resource_group" "main" {
+  name     = "${var.project}-${var.environment}-rg"
+  location = var.azure_location
+  tags     = { Project = var.project, Environment = var.environment }
 }
 
 # ---------------------------------------------------------------------------
-# VPC (simplified – customize subnets/AZs for production HA)
+# Azure Key Vault – secrets (replaces AWS SSM Parameter Store)
 # ---------------------------------------------------------------------------
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+data "azurerm_client_config" "current" {}
 
-  name = "${var.project}-vpc"
-  cidr = "10.0.0.0/16"
+resource "azurerm_key_vault" "main" {
+  name                        = "${var.project}-${var.environment}-kv"
+  location                    = azurerm_resource_group.main.location
+  resource_group_name         = azurerm_resource_group.main.name
+  tenant_id                   = data.azurerm_client_config.current.tenant_id
+  sku_name                    = "standard"
+  soft_delete_retention_days  = 7
+  purge_protection_enabled    = false  # Set true for production
 
-  azs             = ["${var.aws_region}a", "${var.aws_region}b"]
-  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
-  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+  access_policy {
+    tenant_id = data.azurerm_client_config.current.tenant_id
+    object_id = data.azurerm_client_config.current.object_id
+    secret_permissions = ["Get", "List", "Set", "Delete", "Purge"]
+  }
 
-  enable_nat_gateway   = true
-  single_nat_gateway   = true  # Set false for HA in production
-  enable_dns_hostnames = true
+  tags = { Project = var.project, Environment = var.environment }
 }
 
-# ---------------------------------------------------------------------------
-# SSM Parameter Store – secrets (avoid hardcoding in ECS task defs)
-# ---------------------------------------------------------------------------
-resource "aws_ssm_parameter" "anthropic_api_key" {
-  name  = "/${var.project}/${var.environment}/anthropic_api_key"
-  type  = "SecureString"
-  value = var.anthropic_api_key
+resource "azurerm_key_vault_secret" "anthropic_api_key" {
+  name         = "anthropic-api-key"
+  value        = var.anthropic_api_key
+  key_vault_id = azurerm_key_vault.main.id
 }
 
-resource "aws_ssm_parameter" "db_password" {
-  name  = "/${var.project}/${var.environment}/db_password"
-  type  = "SecureString"
-  value = var.db_password
+resource "azurerm_key_vault_secret" "db_password" {
+  name         = "db-password"
+  value        = var.db_password
+  key_vault_id = azurerm_key_vault.main.id
+}
+
+resource "azurerm_key_vault_secret" "b2c_client_secret" {
+  name         = "b2c-client-secret"
+  value        = var.b2c_client_secret
+  key_vault_id = azurerm_key_vault.main.id
 }

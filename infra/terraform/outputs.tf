@@ -1,14 +1,24 @@
 output "api_url" {
-  description = "ALB DNS name for the backend API"
-  value       = "https://${aws_lb.api.dns_name}"
+  description = "Container App FQDN for the backend API"
+  value       = "https://${azurerm_container_app.api.latest_revision_fqdn}"
 }
 
-output "ecr_api_url" {
-  description = "ECR repository URL for the API image"
-  value       = aws_ecr_repository.api.repository_url
+output "acr_api_image" {
+  description = "ACR image path for the API (tag with :latest or git SHA)"
+  value       = "${azurerm_container_registry.main.login_server}/${var.project}/api"
 }
 
-output "ecr_worker_url" {
-  description = "ECR repository URL for the worker image"
-  value       = aws_ecr_repository.worker.repository_url
+output "acr_worker_image" {
+  description = "ACR image path for the Celery worker"
+  value       = "${azurerm_container_registry.main.login_server}/${var.project}/worker"
+}
+
+output "key_vault_uri" {
+  description = "Azure Key Vault URI"
+  value       = azurerm_key_vault.main.vault_uri
+}
+
+output "resource_group_name" {
+  description = "Azure Resource Group name"
+  value       = azurerm_resource_group.main.name
 }

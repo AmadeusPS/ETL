@@ -1,62 +1,56 @@
 # ---------------------------------------------------------------------------
-# Security group for RDS
+# Private DNS Zone for PostgreSQL Flexible Server
 # ---------------------------------------------------------------------------
-resource "aws_security_group" "rds" {
-  name   = "${var.project}-rds-sg"
-  vpc_id = module.vpc.vpc_id
+resource "azurerm_private_dns_zone" "postgres" {
+  name                = "${var.project}.postgres.database.azure.com"
+  resource_group_name = azurerm_resource_group.main.name
+}
 
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_tasks.id]
-    description     = "PostgreSQL from ECS tasks"
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
+  name                  = "${var.project}-postgres-dns-link"
+  private_dns_zone_name = azurerm_private_dns_zone.postgres.name
+  resource_group_name   = azurerm_resource_group.main.name
+  virtual_network_id    = azurerm_virtual_network.main.id
 }
 
 # ---------------------------------------------------------------------------
-# RDS Subnet Group
+# Azure Database for PostgreSQL Flexible Server (replaces AWS RDS)
 # ---------------------------------------------------------------------------
-resource "aws_db_subnet_group" "main" {
-  name       = "${var.project}-db-subnet"
-  subnet_ids = module.vpc.private_subnets
-}
+resource "azurerm_postgresql_flexible_server" "main" {
+  name                   = "${var.project}-${var.environment}-db"
+  resource_group_name    = azurerm_resource_group.main.name
+  location               = azurerm_resource_group.main.location
+  version                = "16"
+  delegated_subnet_id    = azurerm_subnet.database.id
+  private_dns_zone_id    = azurerm_private_dns_zone.postgres.id
+  administrator_login    = var.db_username
+  administrator_password = var.db_password
 
-# ---------------------------------------------------------------------------
-# RDS PostgreSQL instance  (swap for aws_rds_cluster for Aurora Serverless v2)
-# ---------------------------------------------------------------------------
-resource "aws_db_instance" "main" {
-  identifier        = "${var.project}-${var.environment}"
-  engine            = "postgres"
-  engine_version    = "16"
-  instance_class    = "db.t4g.micro"   # Scale up as needed
-  allocated_storage = 20
-  storage_encrypted = true
+  storage_mb            = 32768
+  sku_name              = "B_Standard_B1ms"  # Scale up (e.g. D2ds_v4) for production
 
-  db_name  = "pricewatch"
-  username = var.db_username
-  password = var.db_password
+  backup_retention_days        = 7
+  geo_redundant_backup_enabled = false  # Set true for production DR
 
-  db_subnet_group_name   = aws_db_subnet_group.main.name
-  vpc_security_group_ids = [aws_security_group.rds.id]
-
-  multi_az            = false  # Set true for production HA
-  publicly_accessible = false
-  skip_final_snapshot = true   # Set false for production
-
-  backup_retention_period = 7
-  deletion_protection     = false  # Set true for production
+  maintenance_window {
+    day_of_week  = 0  # Sunday
+    start_hour   = 2
+    start_minute = 0
+  }
 
   tags = { Project = var.project, Environment = var.environment }
+
+  depends_on = [azurerm_private_dns_zone_virtual_network_link.postgres]
 }
 
-output "rds_endpoint" {
-  value = aws_db_instance.main.endpoint
+resource "azurerm_postgresql_flexible_server_database" "main" {
+  name      = "pricewatch"
+  server_id = azurerm_postgresql_flexible_server.main.id
+  collation = "en_US.utf8"
+  charset   = "utf8"
+}
+
+output "postgres_fqdn" {
+  description = "PostgreSQL Flexible Server FQDN"
+  value       = azurerm_postgresql_flexible_server.main.fqdn
 }

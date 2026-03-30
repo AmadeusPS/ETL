@@ -10,16 +10,15 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
-    # Database (Amazon RDS PostgreSQL)
+    # Database (Azure Database for PostgreSQL Flexible Server)
     database_url: str = "postgresql://pricewatch:secret@localhost:5432/pricewatch"
 
-    # AWS Cognito
-    aws_region: str = "eu-west-1"
-    cognito_user_pool_id: str = ""
-    cognito_client_id: str = ""
-    cognito_client_secret: str = ""
+    # Azure AD B2C
+    b2c_tenant_name: str = ""        # e.g. "pricewatchusers" (without .onmicrosoft.com)
+    b2c_client_id: str = ""          # Frontend app registration client ID
+    b2c_policy_name: str = "B2C_1_signupsignin"
 
-    # Redis (ElastiCache) – Celery broker
+    # Redis (Azure Cache for Redis – use rediss:// with SSL in production)
     redis_url: str = "redis://localhost:6379/0"
 
     # Anthropic / Claude

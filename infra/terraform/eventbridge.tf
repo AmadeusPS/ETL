@@ -1,83 +1,49 @@
 # ---------------------------------------------------------------------------
-# EventBridge rules to trigger scraping 2x/day
-# Invokes a Lambda that enqueues Celery task via Redis/SQS
+# Azure Functions – Timer Trigger for scraping 2x/day
+# (replaces AWS EventBridge cron + Lambda)
 # ---------------------------------------------------------------------------
 
-resource "aws_cloudwatch_event_rule" "scrape_morning" {
-  name                = "${var.project}-scrape-morning"
-  description         = "Trigger scraping at 08:00 Lisbon (UTC+1)"
-  schedule_expression = "cron(0 7 * * ? *)"  # 07:00 UTC = 08:00 WEST
+resource "azurerm_storage_account" "functions" {
+  name                     = "${replace(var.project, "-", "")}${var.environment}func"
+  resource_group_name      = azurerm_resource_group.main.name
+  location                 = azurerm_resource_group.main.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+
+  tags = { Project = var.project, Environment = var.environment }
 }
 
-resource "aws_cloudwatch_event_rule" "scrape_evening" {
-  name                = "${var.project}-scrape-evening"
-  description         = "Trigger scraping at 20:00 Lisbon (UTC+1)"
-  schedule_expression = "cron(0 19 * * ? *)"  # 19:00 UTC = 20:00 WEST
+resource "azurerm_service_plan" "functions" {
+  name                = "${var.project}-${var.environment}-func-plan"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  os_type             = "Linux"
+  sku_name            = "Y1"  # Consumption (serverless) plan
 }
 
-# ---------------------------------------------------------------------------
-# Lambda function that enqueues the Celery task
-# (Lambda code lives in infra/lambda/trigger_scrape.py)
-# ---------------------------------------------------------------------------
-resource "aws_iam_role" "lambda_scrape" {
-  name = "${var.project}-lambda-scrape"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
+resource "azurerm_linux_function_app" "scrape_trigger" {
+  name                       = "${var.project}-${var.environment}-scrape"
+  resource_group_name        = azurerm_resource_group.main.name
+  location                   = azurerm_resource_group.main.location
+  storage_account_name       = azurerm_storage_account.functions.name
+  storage_account_access_key = azurerm_storage_account.functions.primary_access_key
+  service_plan_id            = azurerm_service_plan.functions.id
 
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda_scrape.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-# Placeholder Lambda (package separately and upload to S3 before applying)
-resource "aws_lambda_function" "trigger_scrape" {
-  function_name = "${var.project}-trigger-scrape"
-  role          = aws_iam_role.lambda_scrape.arn
-  handler       = "trigger_scrape.handler"
-  runtime       = "python3.12"
-  filename      = "${path.module}/lambda_placeholder.zip"  # Replace with real package
-
-  environment {
-    variables = {
-      REDIS_URL = "redis://<elasticache-endpoint>:6379/0"
+  site_config {
+    application_stack {
+      python_version = "3.12"
     }
+    vnet_route_all_enabled = true
   }
 
-  vpc_config {
-    subnet_ids         = module.vpc.private_subnets
-    security_group_ids = [aws_security_group.ecs_tasks.id]
+  app_settings = {
+    REDIS_URL                      = "rediss://:${azurerm_redis_cache.main.primary_access_key}@${azurerm_redis_cache.main.hostname}:${azurerm_redis_cache.main.ssl_port}/0"
+    FUNCTIONS_WORKER_RUNTIME       = "python"
+    AzureWebJobsFeatureFlags       = "EnableWorkerIndexing"
+    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
   }
-}
 
-resource "aws_cloudwatch_event_target" "scrape_morning" {
-  rule = aws_cloudwatch_event_rule.scrape_morning.name
-  arn  = aws_lambda_function.trigger_scrape.arn
-}
+  virtual_network_subnet_id = azurerm_subnet.functions.id
 
-resource "aws_cloudwatch_event_target" "scrape_evening" {
-  rule = aws_cloudwatch_event_rule.scrape_evening.name
-  arn  = aws_lambda_function.trigger_scrape.arn
-}
-
-resource "aws_lambda_permission" "allow_eventbridge_morning" {
-  statement_id  = "AllowEventBridgeMorning"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.trigger_scrape.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.scrape_morning.arn
-}
-
-resource "aws_lambda_permission" "allow_eventbridge_evening" {
-  statement_id  = "AllowEventBridgeEvening"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.trigger_scrape.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.scrape_evening.arn
+  tags = { Project = var.project, Environment = var.environment }
 }

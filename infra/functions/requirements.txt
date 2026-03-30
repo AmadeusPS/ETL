@@ -1,0 +1,2 @@
+azure-functions==1.21.3
+redis==5.0.4

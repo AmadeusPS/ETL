@@ -1,82 +1,54 @@
 # ---------------------------------------------------------------------------
-# Cognito User Pool
+# Azure AD B2C Directory (replaces AWS Cognito User Pool)
+#
+# IMPORTANT – Post-provisioning steps (do once in Azure Portal or az CLI):
+#
+# 1. Switch to the new B2C tenant directory in the Portal
+#
+# 2. Create a custom attribute:
+#    Azure AD B2C > User attributes > Add
+#    Name: plan  Type: String
+#
+# 3. Create User Flows:
+#    a) Sign up / Sign in  → name: B2C_1_signupsignin
+#       - Include "plan" attribute in the flow (collect + return)
+#    b) Password reset     → name: B2C_1_passwordreset
+#
+# 4. Register the frontend app:
+#    Azure AD B2C > App registrations > New registration
+#    - Name: pricewatch-frontend
+#    - Account types: "Accounts in any identity provider or organizational directory"
+#    - Redirect URIs (SPA): https://app.pricewatch.pt/dashboard
+#                           http://localhost:3000/dashboard
+#    - Enable ID tokens (implicit flow) under Authentication
+#    - Copy the Application (client) ID → use as b2c_client_id variable
+#
+# 5. Add the "plan" claim to the token:
+#    User flows > B2C_1_signupsignin > Application claims > Add claim > plan
 # ---------------------------------------------------------------------------
-resource "aws_cognito_user_pool" "main" {
-  name = "${var.project}-users"
 
-  auto_verified_attributes = ["email"]
-  username_attributes      = ["email"]
-
-  password_policy {
-    minimum_length    = 8
-    require_uppercase = true
-    require_lowercase = true
-    require_numbers   = true
-    require_symbols   = false
-  }
-
-  schema {
-    name                = "plan"
-    attribute_data_type = "String"
-    mutable             = true
-    string_attribute_constraints {
-      min_length = 1
-      max_length = 32
-    }
-  }
-
-  email_configuration {
-    email_sending_account = "COGNITO_DEFAULT"
-  }
+resource "azurerm_aadb2c_directory" "main" {
+  country_code            = "PT"
+  data_residency_location = "Europe"
+  display_name            = "PriceWatch Users"
+  domain_name             = "${var.project}users.onmicrosoft.com"
+  resource_group_name     = azurerm_resource_group.main.name
+  sku_name                = "PremiumP1"  # Required for custom attributes
 
   tags = { Project = var.project, Environment = var.environment }
 }
 
-# Plan groups
-resource "aws_cognito_user_group" "basic" {
-  name         = "basic"
-  user_pool_id = aws_cognito_user_pool.main.id
-  description  = "Basic plan"
+output "b2c_tenant_id" {
+  description = "Azure AD B2C tenant ID (use in backend B2C_TENANT_ID env var)"
+  value       = azurerm_aadb2c_directory.main.tenant_id
 }
 
-resource "aws_cognito_user_group" "pro" {
-  name         = "pro"
-  user_pool_id = aws_cognito_user_pool.main.id
-  description  = "Pro plan"
+output "b2c_domain" {
+  description = "Azure AD B2C tenant domain"
+  value       = azurerm_aadb2c_directory.main.domain_name
 }
 
-resource "aws_cognito_user_group" "enterprise" {
-  name         = "enterprise"
-  user_pool_id = aws_cognito_user_pool.main.id
-  description  = "Enterprise plan"
-}
-
-# App client (used by Next.js frontend)
-resource "aws_cognito_user_pool_client" "frontend" {
-  name         = "${var.project}-frontend"
-  user_pool_id = aws_cognito_user_pool.main.id
-
-  explicit_auth_flows = [
-    "ALLOW_USER_SRP_AUTH",
-    "ALLOW_REFRESH_TOKEN_AUTH",
-    "ALLOW_USER_PASSWORD_AUTH",
-  ]
-
-  generate_secret = false  # Public client (SPA)
-
-  callback_urls = ["https://app.pricewatch.pt/dashboard", "http://localhost:3000/dashboard"]
-  logout_urls   = ["https://app.pricewatch.pt/login", "http://localhost:3000/login"]
-
-  allowed_oauth_flows                  = ["code"]
-  allowed_oauth_scopes                 = ["openid", "email", "profile"]
-  allowed_oauth_flows_user_pool_client = true
-  supported_identity_providers         = ["COGNITO"]
-}
-
-output "cognito_user_pool_id" {
-  value = aws_cognito_user_pool.main.id
-}
-
-output "cognito_client_id" {
-  value = aws_cognito_user_pool_client.frontend.id
+output "b2c_authority" {
+  description = "MSAL authority URL for the frontend"
+  value       = "https://${var.project}users.b2clogin.com/${var.project}users.onmicrosoft.com/${var.b2c_policy_name}"
 }
