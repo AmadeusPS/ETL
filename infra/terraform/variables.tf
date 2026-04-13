@@ -1,3 +1,13 @@
+variable "subscription_id" {
+  description = "Azure Subscription ID"
+  default     = "e29cc6cc-0939-4119-9342-cf8f92a46ac2"
+}
+
+variable "tenant_id" {
+  description = "Azure Tenant (Entra) ID"
+  default     = "be2f2049-1486-41f5-8e62-c2fd99678401"
+}
+
 variable "azure_location" {
   description = "Azure region"
   default     = "West Europe"

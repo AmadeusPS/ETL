@@ -1,0 +1,8 @@
+# Terraform state e ficheiros sensíveis – NUNCA commitar
+terraform.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+*.tfplan
+crash.log
