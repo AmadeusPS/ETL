@@ -9,7 +9,7 @@ resource "azurerm_redis_cache" "main" {
   family              = "C"
   sku_name            = "Basic"  # Use Standard/Premium for production HA + persistence
 
-  enable_non_ssl_port = false
+  non_ssl_port_enabled = false
   minimum_tls_version = "1.2"
 
   redis_configuration {}
